@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+*.wav
+voicebox-kr/examples/episode-sample/

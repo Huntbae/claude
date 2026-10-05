@@ -1,0 +1,48 @@
+# Voicebox 한국어 운영 구성 (CPU 기본)
+#
+# 업스트림 소스는 setup.sh 가 ./upstream 에 고정 커밋으로 받아 둔다.
+# 실행:   ./setup.sh            (최초 1회: 소스 받기 + 빌드 + 기동)
+#         docker compose -f docker-compose.kr.yml up -d
+# NVIDIA GPU: docker compose -f docker-compose.kr.yml -f docker-compose.nvidia.yml up -d
+#
+# 접속:   웹 UI  http://127.0.0.1:17600
+#         API    VOICEBOX_URL=http://127.0.0.1:17600
+# 포트 17600 은 데스크톱 앱(17493)과 동시에 실행해도 충돌하지 않도록 고른 값이다.
+
+name: voicebox-kr
+
+services:
+  voicebox:
+    build:
+      context: ./upstream
+    image: voicebox-kr:local
+    container_name: voicebox-kr
+    restart: unless-stopped
+
+    ports:
+      # 인증 기능이 없는 API 이므로 외부 노출 금지. 이 PC 에서만 접속 가능.
+      - "127.0.0.1:${VOICEBOX_PORT:-17600}:17493"
+
+    volumes:
+      # 생성된 음성 파일을 호스트에서 바로 꺼내 쓸 수 있도록 연결
+      - ./output:/app/data/generations
+      # 프로필, DB 등 (컨테이너 재생성 후에도 유지)
+      - voicebox-data:/app/data
+      # 모델 캐시 (수 GB, 재빌드해도 다시 받지 않음)
+      - huggingface-cache:/home/voicebox/.cache/huggingface
+
+    environment:
+      - TZ=Asia/Seoul
+      - LOG_LEVEL=info
+      - NUMBA_CACHE_DIR=/tmp/numba_cache
+
+    deploy:
+      resources:
+        limits:
+          cpus: "${VOICEBOX_CPUS:-4}"
+          # 업스트림 권장 최소 8GB. Qwen 1.7B 와 Whisper 를 함께 쓰면 12GB 이상 권장.
+          memory: "${VOICEBOX_MEMORY:-8G}"
+
+volumes:
+  voicebox-data:
+  huggingface-cache:
