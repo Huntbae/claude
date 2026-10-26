@@ -88,23 +88,44 @@ line
 echo "[3] 앱 실행 상태 및 모델 목록 (앱 API 기준)"
 line
 PORT=""
-for i in 0 1 2 3 4 5 6 7 8 9; do
-  p=$((8001 + i * 1024))
-  if curl -s --max-time 2 "http://127.0.0.1:$p/api/version" 2>/dev/null | grep -qi "version"; then
-    PORT=$p; break
-  fi
-done
+probe() {
+  for i in 0 1 2 3 4 5 6 7 8 9; do
+    p=$((8001 + i * 1024))
+    if curl -s --noproxy '*' --max-time 3 "http://127.0.0.1:$p/api/version" 2>/dev/null | grep -q '"DiffusionBear"'; then
+      PORT=$p; return 0
+    fi
+  done
+  return 1
+}
+# 앱을 막 켰다면 내부 서버가 준비되기까지 1~3분 걸릴 수 있으므로 최대 3분 기다린다.
+if pgrep -f "DiffusionBear.app/Contents/MacOS" >/dev/null 2>&1; then
+  for _ in $(seq 1 36); do
+    probe && break
+    [ -z "$waited" ] && { printf '앱 창은 열려 있습니다. 내부 서버 준비를 기다리는 중'; waited=1; }
+    printf '.'; sleep 5
+  done
+  [ -n "$waited" ] && echo
+else
+  probe
+fi
+if [ -z "$PORT" ] && pgrep -f "DiffusionBear.app/Contents/MacOS" >/dev/null 2>&1; then
+  echo "앱은 실행 중이지만 3분 안에 내부 서버가 응답하지 않았습니다."
+  echo "  - 열려 있는 포트:"
+  lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1 && /[Pp]ython/ {print "    " $1, $2, $9}' | sort -u
+  echo "  - 로그 마지막 10줄:"
+  tail -n 10 "$HOME/Library/Application Support/DiffusionBear/Logs/backend.log" 2>/dev/null | sed 's/^/    /'
+fi
 
 if [ -z "$PORT" ]; then
-  echo "앱이 실행 중이 아닙니다. 앱을 켠 뒤 다시 실행하면 정확한 모델 목록이 나옵니다."
+  pgrep -f "DiffusionBear.app/Contents/MacOS" >/dev/null 2>&1 || echo "앱이 실행 중이 아닙니다. 앱을 켠 뒤 다시 실행하면 정확한 모델 목록이 나옵니다."
   echo "(아래 [4]의 디스크 검사 결과는 앱 실행 여부와 관계없이 유효합니다.)"
 elif [ -z "$PY" ]; then
   echo "앱 실행 중(포트 $PORT). JSON 분석용 Python을 찾지 못해 원본을 출력합니다."
-  curl -s --max-time 30 "http://127.0.0.1:$PORT/api/models"
+  curl -s --noproxy '*' --max-time 30 "http://127.0.0.1:$PORT/api/models"
   echo
 else
-  echo "앱 실행 중: http://127.0.0.1:$PORT  ($(curl -s --max-time 2 "http://127.0.0.1:$PORT/api/version"))"
-  curl -s --max-time 60 "http://127.0.0.1:$PORT/api/models" | "$PY" -I -c "$MODELS_REPORT_PY"
+  echo "앱 실행 중: http://127.0.0.1:$PORT  ($(curl -s --noproxy '*' --max-time 2 "http://127.0.0.1:$PORT/api/version"))"
+  curl -s --noproxy '*' --max-time 60 "http://127.0.0.1:$PORT/api/models" | "$PY" -I -c "$MODELS_REPORT_PY"
 fi
 
 line
