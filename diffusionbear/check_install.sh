@@ -120,12 +120,34 @@ DATA="$STORE"
 [ "$(basename "$STORE")" != "data" ] && DATA="$STORE/data"
 echo "앱 데이터  : $DATA ($(human "$DATA"))"
 
+# 폴더 하나의 상태: 심볼릭 링크 대상, 미완료 다운로드 파일 수, 가중치 파일 수, 가장 큰 파일
+detail() {
+  local d="$1" real="$1" note=""
+  if [ -L "$d" ]; then
+    real=$(cd "$d" 2>/dev/null && pwd -P)
+    if [ -z "$real" ]; then
+      printf '      -> 링크 대상 없음(끊어진 링크): %s\n' "$(readlink "$d")"
+      return
+    fi
+    printf '      -> 링크: %s (%s)\n' "$real" "$(du -sh "$real/" 2>/dev/null | awk '{print $1}')"
+  fi
+  local inc wts big
+  inc=$(find -L "$real" \( -name '*.incomplete' -o -name '*.part' \) 2>/dev/null | wc -l | tr -d ' ')
+  wts=$(find -L "$real" \( -name '*.safetensors' -o -name '*.npz' -o -name '*.gguf' \) 2>/dev/null | wc -l | tr -d ' ')
+  big=$(find -L "$real" -type f -size +1M -exec ls -lhL {} + 2>/dev/null | sort -k5 -h | tail -n1 | awk '{print $5}')
+  [ "$inc" != 0 ] && note="미완료 다운로드 파일 ${inc}개 -> 다운로드가 중단된 상태"
+  printf '      가중치 파일 %s개, 가장 큰 파일: %s\n' "$wts" "${big:-없음}"
+  [ -n "$note" ] && printf '      [주의] %s\n' "$note"
+  [ "$wts" = 0 ] && printf '      [주의] 가중치 파일이 없습니다 -> 설치가 끝나지 않았거나 빈 폴더입니다\n'
+}
+
 found=0
 for sub in models SDXL lora_files; do
   if [ -d "$DATA/$sub" ]; then
     for d in "$DATA/$sub"/*; do
-      [ -e "$d" ] || continue
-      printf '  %-12s %-50s %8s\n' "$sub" "$(basename "$d")" "$(human "$d")"
+      [ -e "$d" ] || [ -L "$d" ] || continue
+      printf '  %-12s %-50s %8s\n' "$sub" "$(basename "$d")" "$(du -shL "$d" 2>/dev/null | awk '{print $1}')"
+      [ "$sub" != lora_files ] && detail "$d"
       found=1
     done
   fi
@@ -140,6 +162,9 @@ if [ -d "$HF_HUB" ]; then
     [ -d "$d" ] || continue
     repo=$(basename "$d" | sed 's/^models--//; s/--/\//')
     printf '  %-60s %8s\n' "$repo" "$(human "$d")"
+    inc=$(find "$d/blobs" -name '*.incomplete' 2>/dev/null | wc -l | tr -d ' ')
+    [ "$inc" != 0 ] && printf '      [주의] 미완료 다운로드 파일 %s개 -> 다운로드가 중단된 상태\n' "$inc"
+    [ -z "$(find "$d/blobs" -type f -size +1M 2>/dev/null | head -n1)" ] && printf '      [주의] 실제 가중치가 없습니다(목록 정보만 있음)\n'
     hf=1
   done
   [ "$hf" = 0 ] && echo "  (모델 없음)"
