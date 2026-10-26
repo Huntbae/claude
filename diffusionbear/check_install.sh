@@ -152,12 +152,23 @@ detail() {
     fi
     printf '      -> 링크: %s (%s)\n' "$real" "$(du -sh "$real/" 2>/dev/null | awk '{print $1}')"
   fi
-  local inc wts big
+  local inc wts big live=""
   inc=$(find -L "$real" \( -name '*.incomplete' -o -name '*.part' \) 2>/dev/null | wc -l | tr -d ' ')
   wts=$(find -L "$real" \( -name '*.safetensors' -o -name '*.npz' -o -name '*.gguf' \) 2>/dev/null | wc -l | tr -d ' ')
   big=$(find -L "$real" -type f -size +1M -exec ls -lhL {} + 2>/dev/null | sort -k5 -h | tail -n1 | awk '{print $5}')
-  [ "$inc" != 0 ] && note="미완료 다운로드 파일 ${inc}개 -> 다운로드가 중단된 상태"
+  if [ "$inc" != 0 ]; then
+    if [ -n "$(find -L "$real" \( -name '*.incomplete' -o -name '*.part' \) -mmin -2 2>/dev/null | head -n1)" ]; then
+      live=1
+      note="미완료 파일 ${inc}개 -> 지금 다운로드 중 (끝날 때까지 앱을 끄지 마세요)"
+    else
+      note="미완료 다운로드 파일 ${inc}개 -> 다운로드가 중단된 상태"
+    fi
+  fi
   printf '      가중치 파일 %s개, 가장 큰 파일: %s\n' "$wts" "${big:-없음}"
+  if [ -n "$live" ]; then
+    printf '      [진행] %s\n' "$note"
+    return
+  fi
   [ -n "$note" ] && printf '      [주의] %s\n' "$note"
   [ "$wts" = 0 ] && printf '      [주의] 가중치 파일이 없습니다 -> 설치가 끝나지 않았거나 빈 폴더입니다\n'
 }
@@ -184,7 +195,13 @@ if [ -d "$HF_HUB" ]; then
     repo=$(basename "$d" | sed 's/^models--//; s/--/\//')
     printf '  %-60s %8s\n' "$repo" "$(human "$d")"
     inc=$(find "$d/blobs" -name '*.incomplete' 2>/dev/null | wc -l | tr -d ' ')
-    [ "$inc" != 0 ] && printf '      [주의] 미완료 다운로드 파일 %s개 -> 다운로드가 중단된 상태\n' "$inc"
+    if [ "$inc" != 0 ]; then
+      if [ -n "$(find "$d/blobs" -name '*.incomplete' -mmin -2 2>/dev/null | head -n1)" ]; then
+        printf '      [진행] 미완료 파일 %s개 -> 지금 다운로드 중\n' "$inc"
+      else
+        printf '      [주의] 미완료 다운로드 파일 %s개 -> 다운로드가 중단된 상태\n' "$inc"
+      fi
+    fi
     [ -z "$(find "$d/blobs" -type f -size +1M 2>/dev/null | head -n1)" ] && printf '      [주의] 실제 가중치가 없습니다(목록 정보만 있음)\n'
     hf=1
   done
