@@ -76,11 +76,54 @@ total = sum(m.get("disk_usage_bytes") or 0 for m in inst)
 print()
 print("설치됨 (%d개, 합계 %s)" % (len(inst), gb(total)))
 for m in inst:
-    print("  [O] %-40s %9s   id=%s" % (label(m), gb(m.get("disk_usage_bytes")), m.get("id")))
+    print("  [O] %-44s %9s   id=%s" % (label(m), gb(m.get("disk_usage_bytes")), m.get("id")))
+    if m.get("local_path"):
+        print("        위치: %s" % m.get("local_path"))
 print()
 print("미설치 (%d개, 처음 사용할 때 내려받음)" % len(rest))
 for m in rest:
-    print("  [ ] %-40s             id=%s" % (label(m), m.get("id")))
+    print("  [ ] %-44s             id=%s" % (label(m), m.get("id")))
+PYEOF
+)
+
+SHARD_CHECK_PY=$(cat <<'PYEOF'
+import json, os, sys
+idx = sys.argv[1]
+base = os.path.dirname(idx)
+rel = os.path.relpath(idx, os.path.dirname(os.path.dirname(idx)))
+try:
+    with open(idx, encoding="utf-8") as f:
+        shards = sorted(set((json.load(f).get("weight_map") or {}).values()))
+except Exception as e:
+    print("      [주의] %s 를 읽지 못했습니다: %s" % (rel, e))
+    sys.exit(0)
+missing = [s for s in shards if not os.path.isfile(os.path.join(base, s)) or os.path.getsize(os.path.join(base, s)) == 0]
+if missing:
+    print("      [주의] %s: 분할 파일 %d개 중 %d개 없음 -> %s" % (rel, len(shards), len(missing), ", ".join(missing)))
+else:
+    print("      분할 파일 확인: %s (%d개 모두 있음)" % (rel, len(shards)))
+PYEOF
+)
+
+PATHS_CHECK_PY=$(cat <<'PYEOF'
+import json, os, re, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        paths = (json.load(f).get("model_paths") or {})
+except Exception as e:
+    print("  설정 파일을 읽지 못했습니다:", e)
+    sys.exit(0)
+paths = {k: v for k, v in paths.items() if v}
+if not paths:
+    print("  (지정 없음 - 모든 모델이 기본 위치 사용)")
+foreign = re.compile(r"tts|whisper|voice|speech|audio|llm|instruct", re.I)
+for mid, p in sorted(paths.items()):
+    note = ""
+    if not os.path.isdir(os.path.expanduser(p)):
+        note = "  [주의] 경로가 없습니다"
+    elif foreign.search(p):
+        note = "  [주의] 이미지 모델이 아닌 폴더로 보입니다(잘못 연결됨)"
+    print("  %-22s -> %s%s" % (mid, p, note))
 PYEOF
 )
 
@@ -165,6 +208,11 @@ detail() {
     fi
   fi
   printf '      가중치 파일 %s개, 가장 큰 파일: %s\n' "$wts" "${big:-없음}"
+  if [ -n "$PY" ]; then
+    find -L "$real" -name '*.safetensors.index.json' 2>/dev/null | while IFS= read -r idx; do
+      "$PY" -I -c "$SHARD_CHECK_PY" "$idx"
+    done
+  fi
   if [ -n "$live" ]; then
     printf '      [진행] %s\n' "$note"
     return
@@ -185,6 +233,15 @@ for sub in models SDXL lora_files; do
   fi
 done
 [ "$found" = 0 ] && echo "  (앱 데이터 폴더에 모델 없음)"
+
+echo
+echo "모델 경로 지정(앱 설정의 model_paths):"
+SETTINGS_JSON="$DATA/settings.json"
+if [ -f "$SETTINGS_JSON" ] && [ -n "$PY" ]; then
+  "$PY" -I -c "$PATHS_CHECK_PY" "$SETTINGS_JSON"
+else
+  echo "  (설정 파일 없음)"
+fi
 
 echo
 echo "Hugging Face 캐시: $HF_HUB"
@@ -217,7 +274,7 @@ echo "[5] 최근 오류 로그"
 line
 LOG="$HOME/Library/Application Support/DiffusionBear/Logs/backend.log"
 if [ -f "$LOG" ]; then
-  errs=$(grep -iE "error|traceback|exception" "$LOG" | tail -n 5)
+  errs=$(tr '\r' '\n' < "$LOG" | grep -iE "error|traceback|exception" | tail -n 5 | cut -c1-220)
   [ -n "$errs" ] && echo "$errs" || echo "최근 오류 없음 ($LOG)"
 else
   echo "로그 없음 (앱을 한 번도 실행하지 않았을 수 있습니다)"
